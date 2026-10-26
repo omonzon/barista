@@ -219,9 +219,16 @@ SERVICE_FILE="/etc/systemd/system/barista.service"
 VENV_PYTHON="$VENV_DIR/bin/python3"
 
 # Your machine's BLE address (find it with: barista scan)
-MACHINE_ADDRESS="${BARISTA_ADDRESS:?Set BARISTA_ADDRESS to your machine's BLE address, e.g. BARISTA_ADDRESS=AA:BB:CC:DD:EE:FF ./pi-setup.sh}"
+MACHINE_ADDRESS="${BARISTA_ADDRESS:-}"
+if [ -z "$MACHINE_ADDRESS" ]; then
+    fail "Set BARISTA_ADDRESS to your machine's BLE address, e.g. BARISTA_ADDRESS=AA:BB:CC:DD:EE:FF ./pi-setup.sh"
+    exit 1
+fi
 # The service listens on the network, so it is protected by a random API token.
-API_TOKEN="${BARISTA_TOKEN:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')}"
+API_TOKEN="${BARISTA_TOKEN:-}"
+if [ -z "$API_TOKEN" ]; then
+    API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+fi
 
 info "Service file: $SERVICE_FILE"
 info "ExecStart will use: $VENV_PYTHON"
