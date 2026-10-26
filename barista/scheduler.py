@@ -22,6 +22,10 @@ from typing import Optional, Callable, Any
 
 from aiohttp import web
 
+from barista.security import InvalidValue, PROFILE_RANGE, int_in_range
+
+MAX_DRINKS_PER_SCHEDULE = 10
+
 from barista.protocol import (
     BeverageId,
     MachineState,
@@ -593,7 +597,6 @@ def _json_response(data: dict, status: int = 200) -> web.Response:
         text=json.dumps(data, indent=2, default=str),
         content_type="application/json",
         status=status,
-        headers={"Access-Control-Allow-Origin": "*"},
     )
 
 
@@ -631,6 +634,23 @@ async def handle_schedule_create(request: web.Request) -> web.Response:
     if not drinks:
         return _json_response({"error": "At least one drink is required"}, 400)
 
+    if not isinstance(drinks, list) or len(drinks) > MAX_DRINKS_PER_SCHEDULE or not all(
+        isinstance(d, dict) for d in drinks
+    ):
+        return _json_response({"error": f"drinks must be a list of at most {MAX_DRINKS_PER_SCHEDULE} objects"}, 400)
+
+    try:
+        profile = int_in_range(body.get("profile", 1), "profile", *PROFILE_RANGE)
+    except InvalidValue as e:
+        return _json_response({"error": str(e)}, 400)
+
+    timing = body.get("timing", {"prep_minutes": 5, "between_drinks_minutes": 3.5})
+    if not isinstance(timing, dict) or not all(
+        isinstance(timing.get(k, 0), (int, float)) and not isinstance(timing.get(k, 0), bool) and 0 <= timing.get(k, 0) <= 60
+        for k in ("prep_minutes", "between_drinks_minutes")
+    ):
+        return _json_response({"error": "timing values must be numbers between 0 and 60 minutes"}, 400)
+
     # Validate trigger datetime
     trigger_dt = _parse_trigger(trigger)
     if not trigger_dt:
@@ -649,8 +669,8 @@ async def handle_schedule_create(request: web.Request) -> web.Response:
         "status": "pending",
         "trigger": trigger,
         "drinks": drinks,
-        "timing": body.get("timing", {"prep_minutes": 5, "between_drinks_minutes": 3.5}),
-        "profile": body.get("profile", 1),
+        "timing": timing,
+        "profile": profile,
         "created_at": datetime.now().isoformat(),
     }
 

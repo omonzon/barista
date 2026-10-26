@@ -44,6 +44,15 @@ from barista.protocol import (
 )
 from barista.ble import DelonghiBLE
 from barista.scheduler import setup_scheduler
+from barista.security import (
+    InvalidValue,
+    MAX_QUANTITY_ML,
+    PROFILE_RANGE,
+    get_token,
+    int_in_range,
+    is_loopback,
+    make_security_middleware,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +64,8 @@ logger = logging.getLogger("delonghi.server")
 
 machine = DelonghiBLE()
 PORT = 8080
+HOST = "127.0.0.1"
+API_TOKEN: Optional[str] = None
 MACHINE_ADDRESS = None
 START_TIME = time.time()
 
@@ -139,7 +150,6 @@ def json_response(data: dict, status: int = 200) -> web.Response:
         text=json.dumps(data, indent=2),
         content_type="application/json",
         status=status,
-        headers={"Access-Control-Allow-Origin": "*"},
     )
 
 
@@ -243,11 +253,14 @@ async def handle_brew(request: web.Request) -> web.Response:
 
     # Resolve beverage ID
     names = get_beverage_names()
-    if bev_name in names:
-        bev_id = BeverageId(names[bev_name])
-    elif bev_name.isdigit():
-        bev_id = BeverageId(int(bev_name))
-    else:
+    try:
+        if bev_name in names:
+            bev_id = BeverageId(names[bev_name])
+        elif bev_name.isdigit():
+            bev_id = BeverageId(int(bev_name))
+        else:
+            raise ValueError(bev_name)
+    except ValueError:
         return json_response({
             "error": f"Unknown beverage: {bev_name}",
             "available": list(names.keys()),
@@ -282,9 +295,12 @@ async def handle_brew(request: web.Request) -> web.Response:
 
     # Final fallback to computed command with defaults
     defaults = BEVERAGE_DEFAULTS.get(bev_id, {"quantity_ml": 100, "aroma": Aroma.NORMAL})
-    quantity = body.get("quantity_ml", defaults["quantity_ml"])
-    aroma = Aroma(body.get("aroma", defaults["aroma"]))
-    temp = Temperature(body.get("temperature", Temperature.HIGH))
+    try:
+        quantity = int_in_range(body.get("quantity_ml", defaults["quantity_ml"]), "quantity_ml", 1, MAX_QUANTITY_ML)
+        aroma = Aroma(body.get("aroma", defaults["aroma"]))
+        temp = Temperature(body.get("temperature", Temperature.HIGH))
+    except (InvalidValue, ValueError) as e:
+        return json_response({"error": str(e)}, 400)
 
     cmd = cmd_brew(bev_id, quantity_ml=quantity, aroma=aroma, temperature=temp)
     ok = await machine.send(cmd)
@@ -332,7 +348,10 @@ async def handle_hot_water(request: web.Request) -> web.Response:
     if err := _require_connected():
         return err
     body = await _parse_body(request)
-    quantity = body.get("quantity_ml", 250)
+    try:
+        quantity = int_in_range(body.get("quantity_ml", 250), "quantity_ml", 1, MAX_QUANTITY_ML)
+    except InvalidValue as e:
+        return json_response({"error": str(e)}, 400)
     ok = await machine.send(cmd_hot_water(quantity))
     return json_response({"success": ok, "action": "hot_water", "quantity_ml": quantity})
 
@@ -344,7 +363,10 @@ async def handle_profile(request: web.Request) -> web.Response:
 
     global current_profile
     body = await _parse_body(request)
-    profile_id = body.get("profile_id", 1)
+    try:
+        profile_id = int_in_range(body.get("profile_id", 1), "profile_id", *PROFILE_RANGE)
+    except InvalidValue as e:
+        return json_response({"error": str(e)}, 400)
 
     ok = await machine.send(cmd_profile_select(profile_id))
     if ok:
@@ -446,22 +468,10 @@ async def handle_reconnect(request: web.Request) -> web.Response:
     return json_response({"success": ok, "connected": machine.connected})
 
 
-async def handle_cors(request: web.Request) -> web.Response:
-    """Handle CORS preflight."""
-    return web.Response(
-        status=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        },
-    )
-
-
 # ── Server Setup ──────────────────────────────────────────────────────────────
 
 def create_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[make_security_middleware(HOST, API_TOKEN)])
 
     # Web UI
     app.router.add_get("/", handle_ui)
@@ -480,9 +490,6 @@ def create_app() -> web.Application:
     app.router.add_post("/api/recipes/refresh", handle_recipes_refresh)
     app.router.add_get("/api/scan", handle_scan)
     app.router.add_post("/api/reconnect", handle_reconnect)
-
-    # CORS
-    app.router.add_route("OPTIONS", "/{path:.*}", handle_cors)
 
     # Scheduler
     setup_scheduler(app, machine, fetch_recipe, fetch_all_recipes)
@@ -517,10 +524,18 @@ async def cmd_scan():
     print(f"  barista start --address {devices[0]['address']}")
 
 
-async def cmd_serve(address: str, port: int = 8080):
+async def cmd_serve(address: str, port: int = 8080, host: str = "127.0.0.1", token: Optional[str] = None,
+                    allow_unauthenticated: bool = False):
     """Connect to machine and start HTTP server."""
-    global MACHINE_ADDRESS
+    global MACHINE_ADDRESS, HOST, API_TOKEN
     MACHINE_ADDRESS = address
+    HOST = host
+    API_TOKEN = get_token(token)
+
+    if not is_loopback(host) and not API_TOKEN and not allow_unauthenticated:
+        print(f"Refusing to listen on {host} without authentication.")
+        print("  Pass --token SECRET (or set BARISTA_TOKEN), or --allow-unauthenticated to override.")
+        return
 
     print(f"\nConnecting to {address}...")
 
@@ -566,7 +581,7 @@ async def cmd_serve(address: str, port: int = 8080):
     app = create_app()
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, host, port)
     await site.start()
 
     try:

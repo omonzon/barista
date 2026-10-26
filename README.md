@@ -41,7 +41,7 @@ barista scan                           # Find your machine
 barista start --address AA:BB:CC:DD    # Start the server
 ```
 
-Then open **http://localhost:8080** — or hit the API from anywhere on your network.
+Then open **http://localhost:8080**. By default the server only listens on `127.0.0.1`; see [Security](#security) to expose it on your network.
 
 <br>
 
@@ -123,7 +123,7 @@ Barista ships with a built-in web interface — dark-themed, mobile-friendly, re
 - **Connection management** — reconnect with one click
 - **Activity log** — see what's happening
 
-> Access it at `http://localhost:8080` from any device on your network.
+> Access it at `http://localhost:8080` (see [Security](#security) for network access).
 
 <br>
 
@@ -259,6 +259,16 @@ Barista works with De'Longhi machines that use the **ECAM Bluetooth protocol** v
 > **Your machine isn't listed?** If it works with the "De'Longhi Coffee Link" app over Bluetooth, it likely uses the same ECAM protocol. Try `barista scan` — if it finds your machine, there's a good chance it works. Please [open an issue](https://github.com/asaf5767/barista/issues) to report compatibility!
 
 <br>
+
+## Security
+
+The API controls a physical appliance, so it is locked down by default:
+
+- Listens on `127.0.0.1` only. To expose it, use `--host 0.0.0.0 --token SECRET` (or `BARISTA_TOKEN`); the server refuses to listen on a network address without a token unless you pass `--allow-unauthenticated`.
+- With a token, send `Authorization: Bearer SECRET` (or `X-Barista-Token`) on every `/api` call. For the web UI, open `http://host:8080/#token=SECRET` once.
+- No CORS: other websites cannot call the API from your browser. Cross-origin, non-local `Host` and non-JSON POST requests are rejected.
+- Quantities (1-500 ml) and profiles (1-4) are validated before anything is sent to the machine.
+- Use HTTPS (e.g. a reverse proxy) if you expose it beyond a trusted LAN; the token travels in clear text over plain HTTP.
 
 ## Platform Notes
 

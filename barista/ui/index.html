@@ -807,6 +807,25 @@
 <script>
   // ── Config ──────────────────────────────────────────────
   const API = '';  // same origin
+
+  // Optional API token: open the UI as http://host:8080/#token=SECRET once; it is kept for this tab only.
+  (function () {
+    let token = null;
+    try {
+      const m = location.hash.match(/token=([^&]+)/);
+      if (m) {
+        token = decodeURIComponent(m[1]);
+        sessionStorage.setItem('barista-token', token);
+        history.replaceState(null, '', location.pathname + location.search);
+      } else {
+        token = sessionStorage.getItem('barista-token');
+      }
+    } catch (e) {}
+    if (!token) return;
+    const origFetch = window.fetch;
+    window.fetch = (url, opts = {}) =>
+      origFetch(url, { ...opts, headers: { ...(opts.headers || {}), 'X-Barista-Token': token } });
+  })();
   let currentBrew = null;
   let pollTimer = null;
   const logEntries = [];
