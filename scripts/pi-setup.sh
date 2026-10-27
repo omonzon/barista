@@ -218,9 +218,22 @@ step "Create systemd service file"
 SERVICE_FILE="/etc/systemd/system/barista.service"
 VENV_PYTHON="$VENV_DIR/bin/python3"
 
+# Your machine's BLE address (find it with: barista scan)
+MACHINE_ADDRESS="${BARISTA_ADDRESS:-}"
+if [ -z "$MACHINE_ADDRESS" ]; then
+    fail "Set BARISTA_ADDRESS to your machine's BLE address, e.g. BARISTA_ADDRESS=AA:BB:CC:DD:EE:FF ./pi-setup.sh"
+    exit 1
+fi
+# The service listens on the network, so it is protected by a random API token.
+API_TOKEN="${BARISTA_TOKEN:-}"
+if [ -z "$API_TOKEN" ]; then
+    API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+fi
+
 info "Service file: $SERVICE_FILE"
 info "ExecStart will use: $VENV_PYTHON"
 
+sudo install -m 600 /dev/null "$SERVICE_FILE"
 sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=Barista - De'Longhi Coffee Machine BLE Bridge
@@ -231,10 +244,11 @@ Wants=bluetooth.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$VENV_PYTHON -m barista start --address 00:A0:50:2A:D2:8F
+ExecStart=$VENV_PYTHON -m barista start --address $MACHINE_ADDRESS --host 0.0.0.0
 Restart=on-failure
 RestartSec=5
 Environment=PATH=$VENV_DIR/bin:/usr/local/bin:/usr/bin:/bin
+Environment=BARISTA_TOKEN=$API_TOKEN
 
 # Give BLE access
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
@@ -245,7 +259,9 @@ EOF
 
 ok "Service file written"
 info "Contents:"
-cat "$SERVICE_FILE" | while read -r line; do info "  $line"; done
+sudo grep -v BARISTA_TOKEN "$SERVICE_FILE" | while read -r line; do info "  $line"; done
+info "API token (save it): $API_TOKEN"
+info "Open the UI once as http://barista.local:8080/#token=$API_TOKEN"
 
 # ── Step 8: Quick smoke test ────────────────────────────────────────────────
 

@@ -99,11 +99,48 @@ class TestServerEndpoints:
         assert resp.status == 503
 
     @pytest.mark.asyncio
-    async def test_cors_preflight(self, client):
-        """OPTIONS requests return CORS headers."""
+    async def test_no_cors_headers(self, client):
+        """The API must not opt in to cross-origin access."""
+        resp = await client.get("/api/status")
+        assert "Access-Control-Allow-Origin" not in resp.headers
         resp = await client.options("/api/status")
-        assert resp.status == 200
-        assert "Access-Control-Allow-Origin" in resp.headers
+        assert resp.status == 405
+
+    @pytest.mark.asyncio
+    async def test_cross_origin_post_rejected(self, client):
+        resp = await client.post("/api/steam", json={}, headers={"Origin": "https://evil.example"})
+        assert resp.status == 403
+
+    @pytest.mark.asyncio
+    async def test_rebinding_host_rejected(self, client):
+        resp = await client.get("/api/status", headers={"Host": "evil.example:8080"})
+        assert resp.status == 403
+
+    @pytest.mark.asyncio
+    async def test_non_json_post_rejected(self, client):
+        resp = await client.post("/api/steam", data="{}", headers={"Content-Type": "text/plain"})
+        assert resp.status == 415
+
+    @pytest.mark.asyncio
+    async def test_invalid_values_rejected(self, client):
+        with patch("barista.server.machine") as m:
+            m.connected = True
+            m.send = AsyncMock(return_value=True)
+            resp = await client.post("/api/hot-water", json={"quantity_ml": 100000})
+            assert resp.status == 400
+            resp = await client.post("/api/profile", json={"profile_id": 9})
+            assert resp.status == 400
+            m.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_token_required_when_configured(self, aiohttp_client):
+        from barista import server
+        with patch.object(server, "API_TOKEN", "s3cret"):
+            c = await aiohttp_client(create_app())
+            assert (await c.get("/api/status")).status == 401
+            assert (await c.get("/api/status", headers={"X-Barista-Token": "s3cret"})).status == 200
+            assert (await c.get("/api/status", headers={"Authorization": "Bearer s3cret"})).status == 200
+            assert (await c.get("/")).status in (200, 404)
 
     @pytest.mark.asyncio
     async def test_scan_endpoint(self, client):

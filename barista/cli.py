@@ -21,6 +21,8 @@ def main():
         print("  barista scan                           Find BLE coffee machines")
         print("  barista start --address XX:XX:XX:XX    Start server + web UI")
         print("  barista start --address XX:XX -p 9090  Custom port")
+        print("  barista start --address XX:XX --host 0.0.0.0 --token SECRET")
+        print("                                         Expose on the network (token required)")
         print()
         print("Web UI:  http://localhost:8080 (default)")
         print()
@@ -34,6 +36,9 @@ def main():
     elif command in ("start", "serve"):
         address = None
         port = 8080
+        host = "127.0.0.1"
+        token = None
+        allow_unauthenticated = False
         i = 2
         while i < len(sys.argv):
             if sys.argv[i] in ("--address", "-a") and i + 1 < len(sys.argv):
@@ -42,6 +47,15 @@ def main():
             elif sys.argv[i] in ("--port", "-p") and i + 1 < len(sys.argv):
                 port = int(sys.argv[i + 1])
                 i += 2
+            elif sys.argv[i] == "--host" and i + 1 < len(sys.argv):
+                host = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == "--token" and i + 1 < len(sys.argv):
+                token = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == "--allow-unauthenticated":
+                allow_unauthenticated = True
+                i += 1
             else:
                 i += 1
 
@@ -50,7 +64,7 @@ def main():
             print("  Run 'barista scan' first to find your machine.")
             sys.exit(1)
 
-        asyncio.run(cmd_serve(address, port))
+        asyncio.run(cmd_serve(address, port, host, token, allow_unauthenticated))
 
     else:
         print(f"Unknown command: {command}")
